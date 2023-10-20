@@ -5,7 +5,13 @@ import os
 import enc
 import enc_file
 
-LEN_HEADER = 32
+LEN_HEADER = 8
+LEN_APPEND = 16
+
+## |1.header|2.mainform|3.data|
+## 1. header: length of 2.
+## 2. mainform: file list, "fname?sp?ep|fname?sp?ep|fname?sp?ep"
+## 3. data: real payload
 
 class Archive:
 	def __init__(self):
@@ -32,7 +38,10 @@ class Archive:
 			return -1
 		self.added_fname.append(fname)
 		fname = fname.encode(enc.ENCODING)
-		self.mainform += b'|%s?%d?%d' % (fname, self.ptr, self.ptr+size)
+		if self.mainform == b'':
+			self.mainform += b'%s?%d?%d' % (fname, self.ptr, self.ptr+size)
+		else:
+			self.mainform += b'|%s?%d?%d' % (fname, self.ptr, self.ptr+size)
 		self.data += enc_byte
 		self.ptr += size
 		self.update_header()
@@ -40,7 +49,8 @@ class Archive:
 	
 	def update_header(self):
 		enc_main = enc.encrypt_by_pwd(self.mainform, self.pwd)
-		self.header = self.__int2Str(len(enc_main), LEN_HEADER).encode(enc.ENCODING)
+		# self.header = self.__int2Str(len(enc_main), LEN_HEADER).encode(enc.ENCODING)
+		self.header = len(enc_main).to_bytes(LEN_HEADER, 'big')
 		return 0
 	
 	def save(self, fpath):
@@ -51,43 +61,54 @@ class Archive:
 
 class UnArchive:
 	def __init__(self):
-		self.header = b''
-		self.mainform = b''
-		self.mainform_list = []
-		self.data = b''
-		self.file_data = b''
+		self.header = None
+		self.mainform_row = None
+		self.mainform = None
+		self.raw_data = None
+		self.file_data = None
 		self.pwd = None
+		self.isUnpacked = False
+		self.sp = [-1, -1]
 	
 	def load(self, fpath):
 		with open(fpath, 'rb') as o:
-			self.data  = o.read()
+			self.raw_data  = o.read()
 	
 	def set_password(self, pwd):
 		self.pwd = pwd
 	
-	def get_header(self):
-		self.header = enc.decrypt_by_pwd(self.data[:LEN_HEADER+16], self.pwd)
-		return self.header
-	
-	def get_mainform(self):
-		len_main = int(self.header.decode(enc.ENCODING))
-		self.mainform = enc.decrypt_by_pwd(self.data[LEN_HEADER+16:LEN_HEADER+16+len_main], self.pwd)
-		self.mainform_list = self.list_mainform()
-		self.file_data = self.data[LEN_HEADER+16+len_main:]
-		return self.mainform_list
-	
-	def list_mainform(self):
-		d_mainform = {}
-		l_mainform = self.mainform[1:].split(b'|')
+	def __update_spoints(self):
+		self.sp[0] = LEN_HEADER+LEN_APPEND
+		self.header = enc.decrypt_by_pwd(self.raw_data[ : self.sp[0]], self.pwd)
+		self.sp[1] = self.sp[0] + int.from_bytes(self.header, 'big')
+
+	def __update_mainform(self):
+		self.mainform = {}
+		l_mainform = self.mainform_row.split(b'|')
 		for f in l_mainform:
 			fn, s, e = f.split(b'?')
-			d_mainform[fn.decode(enc.ENCODING)] = (int(s), int(e))
-		return d_mainform
+			self.mainform[fn.decode(enc.ENCODING)] = (int(s), int(e))
 	
-	def extract(self, fname):
-		if fname not in self.mainform_list.keys():
+	def get_header(self):
+		return self.header
+	
+	def unpack(self):
+		if self.pwd == None:
 			return -1
-		s, e = self.mainform_list[fname]
+		self.__update_spoints()
+		self.mainform_row = enc.decrypt_by_pwd(self.raw_data[self.sp[0] : self.sp[1]], self.pwd)
+		self.__update_mainform()
+		self.file_data = self.raw_data[self.sp[1] : ]
+		self.isUnpacked = True
+		return self.mainform
+
+	def get_mainform(self):
+		return self.mainform
+
+	def extract(self, fname):
+		if fname not in self.mainform.keys():
+			return -1
+		s, e = self.mainform[fname]
 		with open(fname, 'wb') as o:
 			o.write(enc.decrypt_by_pwd(self.file_data[s:e], self.pwd))
 		return 1
@@ -105,15 +126,13 @@ def test_archive():
 
 def test_unarchive():
 	ua = UnArchive()
-	ua.set_password('password')
 	ua.load('block.enc')
-	print(ua.get_header())
-	print(ua.get_mainform())
-	print(ua.list_mainform())
+	ua.set_password('password')
+	print(ua.unpack())
 	fn = input('Extract: ')
 	ua.extract(fn)
 	
 if __name__ == '__main__':
-#	test_archive()
+	# test_archive()
 	test_unarchive()
 	

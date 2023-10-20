@@ -18,8 +18,8 @@ def make_archive(ha):
 
 def extract(ha):
 	ha.set_password(input('Set password: '))
-	ha.get_header()
-	flist = ha.get_mainform()
+	ha.unpack()
+	flist = ha.unpack()
 	for fn in flist.keys():
 		print(fn)
 	while True:
